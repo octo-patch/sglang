@@ -14,6 +14,7 @@ from sglang.srt.utils import get_device_module
 
 device_module = get_device_module()
 
+from sglang.jit_kernel.hisparse import load_cache_to_device_buffer_mla
 from sglang.srt.mem_cache.memory_pool import ReqToTokenPool
 
 
@@ -407,3 +408,42 @@ class HiSparseCoordinator:
         self.req_to_device_buffer[req.req_pool_idx, :] = 0
         self.req_to_host_pool[req.req_pool_idx, :] = -1
         self.lru_slots[req.req_pool_idx].copy_(self._lru_init)
+
+    def swap_in_selected_pages(
+        self,
+        req_pool_indices: torch.Tensor,
+        seq_lens: torch.Tensor,
+        top_k_result: torch.Tensor,
+        layer_id: int,
+    ):
+        """
+        Swap in selected top-k pages/tokens from host to device memory using
+        a fused diff + transfer kernel.
+        Returns:
+            Device indices of the selected pages/tokens
+        """
+        num_reqs = req_pool_indices.size(0)
+        top_k_indices = torch.full(
+            (num_reqs, self.top_k), -1, dtype=torch.int32, device=self.device
+        )
+        block_size = 512
+        load_cache_to_device_buffer_mla(
+            top_k_tokens=top_k_result,
+            device_buffer_tokens=self.req_device_buffer_tokens,
+            host_cache_locs=self.req_to_host_pool,
+            device_buffer_locs=self.req_device_buffer_token_locs,
+            host_cache=self.mem_pool_host.kv_buffer[layer_id],
+            device_buffer=self.mem_pool_device.kv_buffer[layer_id],
+            top_k_device_locs=top_k_indices,
+            diff_map=self.bitmap,
+            req_pool_indices=req_pool_indices,
+            seq_lens=seq_lens,
+            lru_slots=self.lru_slots,
+            page_size=1,
+            layer_id=layer_id,
+            item_size_bytes=self.mem_pool_host.token_stride_size,
+            block_size=block_size,
+            num_top_k=self.top_k,
+            hot_buffer_size=self.device_buffer_size,
+        )
+        return top_k_indices
