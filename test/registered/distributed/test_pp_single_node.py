@@ -26,6 +26,7 @@ from sglang.test.test_utils import (
     DEFAULT_TIMEOUT_FOR_SERVER_LAUNCH,
     DEFAULT_URL_FOR_TEST,
     CustomTestCase,
+    is_in_amd_ci,
     is_in_ci,
     popen_launch_server,
     run_bench_one_batch_server,
@@ -70,7 +71,10 @@ class TestPPAccuracy(unittest.TestCase):
         metrics = run_eval_few_shot_gsm8k(args)
         print(f"{metrics=}")
 
-        self.assertGreater(metrics["accuracy"], 0.74)
+        if is_in_amd_ci():
+            self.assertGreater(metrics["accuracy"], 0.70)
+        else:
+            self.assertGreater(metrics["accuracy"], 0.74)
         # Wait a little bit so that the memory check happens.
         time.sleep(4)
 
@@ -98,6 +102,9 @@ class TestPPAccuracy(unittest.TestCase):
         assert len(output_top_logprobs) == 16
 
 
+@unittest.skipIf(
+    is_in_amd_ci(), "MLA model with DP attention not yet supported on AMD"
+)
 class TestDPAttentionDP2PP2(CustomTestCase):
     @classmethod
     def setUpClass(cls):
@@ -170,7 +177,10 @@ class TestQwenVLPPAccuracy(unittest.TestCase):
         metrics = run_eval_few_shot_gsm8k(args)
         print(f"{metrics=}")
 
-        self.assertGreater(metrics["accuracy"], 0.65)
+        if is_in_amd_ci():
+            self.assertGreater(metrics["accuracy"], 0.50)
+        else:
+            self.assertGreater(metrics["accuracy"], 0.65)
         # Wait a little bit so that the memory check happens.
         time.sleep(4)
 

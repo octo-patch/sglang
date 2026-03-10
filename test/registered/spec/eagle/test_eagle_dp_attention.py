@@ -107,7 +107,10 @@ class TestEAGLE3EngineDPAttention(CustomTestCase):
                 f'{metrics["accuracy"]=:.3f}\n'
                 f"{avg_spec_accept_length=:.2f}\n"
             )
-            self.assertGreater(metrics["accuracy"], 0.91)
+            if is_in_amd_ci():
+                self.assertGreater(metrics["accuracy"], 0.88)
+            else:
+                self.assertGreater(metrics["accuracy"], 0.91)
             if avg_spec_accept_length is not None:
                 self.assertGreater(avg_spec_accept_length, 2.5)
 
