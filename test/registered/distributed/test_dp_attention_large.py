@@ -70,9 +70,10 @@ class TestDPAttentionDP2TP4(
     def setUpClass(cls):
         cls.model = DEFAULT_MLA_MODEL_NAME_FOR_TEST
         cls.base_url = DEFAULT_URL_FOR_TEST
+        tp = "2" if is_in_amd_ci() else "4"
         other_args = [
             "--trust-remote-code",
-            "--tp=4",
+            f"--tp={tp}",
             "--enable-dp-attention",
             "--dp=2",
         ]
@@ -103,6 +104,10 @@ class TestDPAttentionDP2TP4(
         self.assertGreater(metrics["score"], 0.8)
 
 
+@unittest.skipIf(
+    is_in_amd_ci(),
+    "DeepSeek MTP forward_mla NameError on AMD + needs 8 GPUs",
+)
 class TestDPAttentionDP2TP2DeepseekV3MTP(
     CustomTestCase,
     TestJSONConstrainedMixin,
@@ -177,10 +182,11 @@ class TestDPAttentionDP2TP4VLM(CustomTestCase):
         cls.model = "Qwen/Qwen3-VL-30B-A3B-Instruct"
         cls.base_url = DEFAULT_URL_FOR_TEST
         cls.image_url = DEFAULT_IMAGE_URL
+        tp = "2" if is_in_amd_ci() else "4"
         other_args = [
             "--trust-remote-code",
             "--tp",
-            "4",
+            tp,
             "--enable-dp-attention",
             "--dp",
             "2",
