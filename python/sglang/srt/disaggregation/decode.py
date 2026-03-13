@@ -21,7 +21,6 @@ Life cycle of a request in the decode server
 from __future__ import annotations
 
 import logging
-import time
 from collections import deque
 from dataclasses import dataclass
 from http import HTTPStatus
@@ -266,7 +265,7 @@ class DecodePreallocQueue:
         self.queue: List[DecodeRequest] = []
         self.retracted_queue: List[Req] = []
         self.pending_reqs: List[Req] = []
-        self._bootstrap_addr_retry_count: Dict[str, Tuple[int, float]] = {}
+        self._bootstrap_addr_retry_count: Dict[str, int] = {}
         self.kv_manager = self._init_kv_manager()
 
         if self.scheduler.tp_worker.is_hybrid_swa:
@@ -514,19 +513,12 @@ class DecodePreallocQueue:
             # we need get the prefill info before resolving the prefill_dp_ranks
             # which is a conflict with the lazy resolve logic in CommonKVReceiver,
             # so we need to ensure the parallel info before resolving it.
-
-            # Skip if we retried recently and the interval hasn't elapsed yet
-            now = time.monotonic()
-            prev_retry = self._bootstrap_addr_retry_count.get(bootstrap_addr)
-            if prev_retry is not None and now - prev_retry[1] < 1.0:
-                remaining.extend(reqs)
-                continue
-
             if not self.kv_manager.ensure_parallel_info(bootstrap_addr):
                 # Increment retry count for this bootstrap_addr
-                prev_retry_count = prev_retry[0] if prev_retry else 0
-                retry_count = prev_retry_count + 1
-                self._bootstrap_addr_retry_count[bootstrap_addr] = (retry_count, now)
+                retry_count = (
+                    self._bootstrap_addr_retry_count.get(bootstrap_addr, 0) + 1
+                )
+                self._bootstrap_addr_retry_count[bootstrap_addr] = retry_count
 
                 if retry_count >= 20:
                     # Max retries reached, fail the requests
@@ -543,10 +535,6 @@ class DecodePreallocQueue:
                         self.scheduler.stream_output([req], req.return_logprob)
                     del self._bootstrap_addr_retry_count[bootstrap_addr]
                 else:
-                    logger.info(
-                        f"Prefill server info not available from {bootstrap_addr}, "
-                        f"retrying ({retry_count + 1}/20)..."
-                    )
                     remaining.extend(reqs)
                 continue
 
