@@ -272,6 +272,7 @@ class DecodePreallocQueue:
         # For async resolution
         self._resolved_queue_lock = threading.Lock()
         self._resolved_queue: List[DecodeRequest] = []
+        self._resolve_thread: Optional[threading.Thread] = None
 
         if self.scheduler.tp_worker.is_hybrid_swa:
             # FIXME: current SWA allocation allocate full kv cache size in prefill
@@ -360,7 +361,8 @@ class DecodePreallocQueue:
         else:
             prefill_dp_rank = self._resolve_prefill_dp_rank(req)
             if prefill_dp_rank is None:
-                self.pending_reqs.append(req)
+                with self._pending_reqs_lock:
+                    self.pending_reqs.append(req)
                 return
             self._create_receiver_and_enqueue(req, prefill_dp_rank)
 
@@ -577,10 +579,14 @@ class DecodePreallocQueue:
             args=(reqs_to_resolve,),
             daemon=True,
         )
+        self._resolve_thread = thread
         thread.start()
 
     def _drain_resolved_queue(self) -> None:
         """Drain resolved requests from background thread into main queue."""
+        if self._resolve_thread is not None:
+            self._resolve_thread.join()
+            self._resolve_thread = None
         with self._resolved_queue_lock:
             if self._resolved_queue:
                 self.queue.extend(self._resolved_queue)

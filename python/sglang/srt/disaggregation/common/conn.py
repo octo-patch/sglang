@@ -183,26 +183,13 @@ class CommonKVManager(BaseKVManager):
         with self.failure_lock:
             self.failure_records[bootstrap_room] = failure_reason
 
-    def ensure_parallel_info(
-        self, bootstrap_addr: str, max_retries: int = 5, retry_interval: float = 1.0
-    ) -> bool:
+    def ensure_parallel_info(self, bootstrap_addr: str) -> bool:
         """Fetch and cache prefill parallel info if not yet available.
         Returns True if info is available (cached or freshly fetched).
-        Retries with backoff if the prefill server hasn't registered yet.
         """
         if bootstrap_addr in self.prefill_info_table:
             return True
-        info = None
-        for attempt in range(max_retries):
-            info = self._fetch_prefill_server_info(bootstrap_addr)
-            if info is not None:
-                break
-            if attempt < max_retries - 1:
-                logger.info(
-                    f"Prefill server info not available from {bootstrap_addr}, "
-                    f"retrying ({attempt + 1}/{max_retries})..."
-                )
-                time.sleep(retry_interval)
+        info = self._fetch_prefill_server_info(bootstrap_addr)
         if info is None:
             return False
 
