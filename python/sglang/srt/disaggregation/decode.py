@@ -21,6 +21,7 @@ Life cycle of a request in the decode server
 from __future__ import annotations
 
 import logging
+import threading
 from collections import deque
 from dataclasses import dataclass
 from http import HTTPStatus
@@ -264,8 +265,13 @@ class DecodePreallocQueue:
         # Queue for requests pending pre-allocation
         self.queue: List[DecodeRequest] = []
         self.retracted_queue: List[Req] = []
+        self._pending_reqs_lock = threading.Lock()
         self.pending_reqs: List[Req] = []
         self.kv_manager = self._init_kv_manager()
+
+        # For async resolution
+        self._resolved_queue_lock = threading.Lock()
+        self._resolved_queue: List[DecodeRequest] = []
 
         if self.scheduler.tp_worker.is_hybrid_swa:
             # FIXME: current SWA allocation allocate full kv cache size in prefill
@@ -394,9 +400,12 @@ class DecodePreallocQueue:
             prefill_dp_rank=prefill_dp_rank,
         )
 
-        self.queue.append(
-            DecodeRequest(req=req, kv_receiver=kv_receiver, waiting_for_input=False)
+        decode_req = DecodeRequest(
+            req=req, kv_receiver=kv_receiver, waiting_for_input=False
         )
+        # Append to resolved queue, resolved by background thread, pending drain to self.queue
+        with self._resolved_queue_lock:
+            self._resolved_queue.append(decode_req)
 
     def _check_if_req_exceed_kv_capacity(self, req: Req) -> bool:
         if len(req.origin_input_ids) > self.max_total_num_tokens:
@@ -493,14 +502,11 @@ class DecodePreallocQueue:
             else:
                 raise ValueError(f"Unexpected poll case: {poll}")
 
-    def _resolve_pending_reqs(self) -> None:
-        """Batch-resolve prefill_dp_ranks for pending requests and create receivers."""
-        if not self.pending_reqs:
-            return
-
+    def _resolve_pending_reqs_worker(self, reqs_to_resolve: List[Req]) -> None:
+        """Background worker to resolve pending requests asynchronously."""
         # Group pending requests by bootstrap_addr
         addr_to_reqs: Dict[str, List[Req]] = {}
-        for req in self.pending_reqs:
+        for req in reqs_to_resolve:
             addr = f"{req.bootstrap_host}:{req.bootstrap_port}"
             addr_to_reqs.setdefault(addr, []).append(req)
 
@@ -549,16 +555,43 @@ class DecodePreallocQueue:
                     else:
                         remaining.append(req)
 
-        self.pending_reqs = remaining
+        # Add remaining back to pending
+        with self._pending_reqs_lock:
+            self.pending_reqs.extend(remaining)
 
+        # Create receivers and enqueue resolved requests
         for req, prefill_dp_rank in resolved:
             self._create_receiver_and_enqueue(req, prefill_dp_rank)
+
+    def _resolve_pending_reqs(self) -> None:
+        """Trigger async resolution of pending requests in background thread."""
+        with self._pending_reqs_lock:
+            if not self.pending_reqs:
+                return
+            reqs_to_resolve = self.pending_reqs[:]
+            self.pending_reqs = []
+
+        # Spawn background thread to resolve
+        thread = threading.Thread(
+            target=self._resolve_pending_reqs_worker,
+            args=(reqs_to_resolve,),
+            daemon=True,
+        )
+        thread.start()
+
+    def _drain_resolved_queue(self) -> None:
+        """Drain resolved requests from background thread into main queue."""
+        with self._resolved_queue_lock:
+            if self._resolved_queue:
+                self.queue.extend(self._resolved_queue)
+                self._resolved_queue = []
 
     def pop_preallocated(
         self, rids_to_check: Optional[List[str]] = None
     ) -> Tuple[List[DecodeRequest], List[DecodeRequest]]:
         """Pop the preallocated requests from the pending queue (FIFO)."""
         self._resolve_pending_reqs()
+        self._drain_resolved_queue()
         self._update_handshake_waiters(rids_to_check)
 
         failed_reqs = []
