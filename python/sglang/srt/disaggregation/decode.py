@@ -520,7 +520,7 @@ class DecodePreallocQueue:
                 )
                 self._bootstrap_addr_retry_count[bootstrap_addr] = retry_count
 
-                if retry_count >= 20:
+                if retry_count >= 5:
                     # Max retries reached, fail the requests
                     error_message = f"Could not fetch prefill parallel info from bootstrap server {bootstrap_addr} after {retry_count} retries"
                     logger.error(error_message)
