@@ -18,10 +18,8 @@ import torch.nn.functional as F
 from sglang.jit_kernel.benchmark.utils import DEFAULT_DEVICE, is_in_ci
 from sglang.jit_kernel.diffusion.triton.norm import norm_infer, rms_norm_fn
 from sglang.jit_kernel.diffusion.triton.rmsnorm_onepass import triton_one_pass_rms_norm
-from sglang.jit_kernel.norm import (
-    fused_add_rmsnorm as jit_fused_add_rmsnorm,
-    rmsnorm as jit_rmsnorm,
-)
+from sglang.jit_kernel.norm import fused_add_rmsnorm as jit_fused_add_rmsnorm
+from sglang.jit_kernel.norm import rmsnorm as jit_rmsnorm
 from sglang.jit_kernel.utils import KERNEL_PATH
 
 os.environ.setdefault("FLASHINFER_DISABLE_VERSION_CHECK", "1")
@@ -39,7 +37,9 @@ SGL_RES_LN = "sglang.ScaleResidualLayerNormScaleShift"
 SGL_LN_PAIR = f"{SGL_LN} / {SGL_RES_LN}"
 MOVA_LN_MIX = f"{TORCH_LN} / {SGL_LN_PAIR}"
 
-ACTUAL_DIFFUSION_GROUPS: list[tuple[str, str, list[tuple[str, str, tuple[int, ...], str]]]] = [
+ACTUAL_DIFFUSION_GROUPS: list[
+    tuple[str, str, list[tuple[str, str, tuple[int, ...], str]]]
+] = [
     (
         "qwen",
         "1 GPU",
@@ -266,6 +266,7 @@ def load_flaggems():
 
     return rms_norm, layer_norm, fused_add_rms_norm
 
+
 def build_rmsnorm_providers(dtype: torch.dtype, batch_size: int, hidden_size: int):
     import flashinfer.norm as flashinfer_norm
     import sgl_kernel
@@ -296,7 +297,9 @@ def build_rmsnorm_providers(dtype: torch.dtype, batch_size: int, hidden_size: in
     return providers
 
 
-def build_fused_add_rmsnorm_providers(dtype: torch.dtype, batch_size: int, hidden_size: int):
+def build_fused_add_rmsnorm_providers(
+    dtype: torch.dtype, batch_size: int, hidden_size: int
+):
     import flashinfer.norm as flashinfer_norm
     import sgl_kernel
 
@@ -332,7 +335,9 @@ def build_fused_add_rmsnorm_providers(dtype: torch.dtype, batch_size: int, hidde
             reset,
         ),
         "flaggems": (
-            lambda: flaggems_fused_add_rms_norm(x, residual, (hidden_size,), weight, 1e-6),
+            lambda: flaggems_fused_add_rms_norm(
+                x, residual, (hidden_size,), weight, 1e-6
+            ),
             reset,
         ),
     }
@@ -452,7 +457,9 @@ def write_markdown(rows: list[dict[str, object]], output_path: Path) -> None:
         seen: set[tuple[str, str, str, str, str, str]] = set()
         lines.append("## Diffusion Shape Cases")
         lines.append("")
-        lines.append("| Shape ID | Op | Model | GPU Config | Input Shape | Source Impl |")
+        lines.append(
+            "| Shape ID | Op | Model | GPU Config | Input Shape | Source Impl |"
+        )
         lines.append("|---|---|---|---|---|---|")
         for row in actual_shape_rows:
             key = (
@@ -475,7 +482,9 @@ def write_markdown(rows: list[dict[str, object]], output_path: Path) -> None:
             scoped = [
                 row
                 for row in rows
-                if row["op"] == op_name and row["dtype"] == dtype and row["status"] == "ok"
+                if row["op"] == op_name
+                and row["dtype"] == dtype
+                and row["status"] == "ok"
             ]
             if not scoped:
                 continue
@@ -493,11 +502,15 @@ def write_markdown(rows: list[dict[str, object]], output_path: Path) -> None:
                     continue
                 baseline = perf["pytorch"]
                 for provider, value in perf.items():
-                    provider_to_speedups.setdefault(provider, []).append(baseline / value)
+                    provider_to_speedups.setdefault(provider, []).append(
+                        baseline / value
+                    )
 
             lines.append(f"## {op_name} ({dtype})")
             lines.append("")
-            lines.append("| Provider | Geomean Speedup vs PyTorch | Median Latency (us) | Win Count |")
+            lines.append(
+                "| Provider | Geomean Speedup vs PyTorch | Median Latency (us) | Win Count |"
+            )
             lines.append("|---|---:|---:|---:|")
             wins: dict[str, int] = {}
             for perf in by_shape.values():
