@@ -1342,7 +1342,7 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
         if isinstance(token_to_kv_pool_allocator, SWATokenToKVPoolAllocator):
             is_hybrid_swa = True
 
-        batch = cls(
+        return cls(
             reqs=reqs,
             req_to_token_pool=req_to_token_pool,
             token_to_kv_pool_allocator=token_to_kv_pool_allocator,
@@ -1361,10 +1361,6 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
             chunked_req=chunked_req,
             dllm_config=dllm_config,
         )
-        # todo hisparse: hack for staging batch
-        for r in reqs:
-            r.batch = batch
-        return batch
 
     def batch_size(self):
         return len(self.reqs)

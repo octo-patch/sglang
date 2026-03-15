@@ -372,8 +372,6 @@ class SchedulerRuntimeCheckerMixin:
             if queue_size:
                 return
         elif self.enable_hisparse:
-            # todo hisparse: resume memory leak check
-            return
             if self.hisparse_coordinator.has_ongoing_staging():
                 return
 
