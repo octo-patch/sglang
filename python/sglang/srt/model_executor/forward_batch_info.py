@@ -925,6 +925,10 @@ class ForwardBatch(ForwardBatchDeepSeekMHAMixin):
             )
 
         self.out_cache_loc = self._pad_tensor_to_size(self.out_cache_loc, num_tokens)
+        if self.out_cache_loc_swa is not None:
+            self.out_cache_loc_swa = self._pad_tensor_to_size(
+                self.out_cache_loc_swa, num_tokens
+            )
         if self.encoder_lens is not None:
             self.encoder_lens = self._pad_tensor_to_size(self.encoder_lens, bs)
         self.positions = self._pad_tensor_to_size(self.positions, num_tokens)
