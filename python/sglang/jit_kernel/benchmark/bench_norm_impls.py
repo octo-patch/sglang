@@ -28,6 +28,7 @@ REPO_ROOT = KERNEL_PATH.parents[2]
 THIRD_PARTY_ROOT = REPO_ROOT / "third_party"
 
 FLAGGEMS_REPO = "https://github.com/flagos-ai/FlagGems.git"
+QUACK_REPO = "https://github.com/Dao-AILab/quack.git"
 
 TORCH_LN = "torch.nn.LayerNorm"
 SGL_RMS = "sglang.RMSNorm.forward_cuda"
@@ -267,6 +268,21 @@ def load_flaggems():
     return rms_norm, layer_norm, fused_add_rms_norm
 
 
+@functools.cache
+def load_quack():
+    repo_path = ensure_repo("quack", QUACK_REPO)
+    try:
+        quack_rmsnorm = importlib.import_module("quack.rmsnorm")
+    except ModuleNotFoundError:
+        subprocess.run(
+            [sys.executable, "-m", "pip", "install", "-e", str(repo_path)],
+            check=True,
+        )
+        quack_rmsnorm = importlib.import_module("quack.rmsnorm")
+
+    return quack_rmsnorm.rmsnorm_fwd, quack_rmsnorm.layernorm_fwd
+
+
 def build_rmsnorm_providers(dtype: torch.dtype, batch_size: int, hidden_size: int):
     import flashinfer.norm as flashinfer_norm
     import sgl_kernel
@@ -279,6 +295,7 @@ def build_rmsnorm_providers(dtype: torch.dtype, batch_size: int, hidden_size: in
     flashinfer_out = torch.empty_like(x)
 
     flaggems_rms_norm, _, _ = load_flaggems()
+    quack_rmsnorm_fwd, _ = load_quack()
 
     providers = {
         "pytorch": lambda: F.rms_norm(x, (hidden_size,), weight, 1e-6),
@@ -287,6 +304,7 @@ def build_rmsnorm_providers(dtype: torch.dtype, batch_size: int, hidden_size: in
             x, weight, eps=1e-6, out=flashinfer_out
         ),
         "jit_rmsnorm": lambda: jit_rmsnorm(x, weight, jit_out, 1e-6),
+        "quack": lambda: quack_rmsnorm_fwd(x, weight, eps=1e-6),
         "triton_rms_norm_fn": lambda: rms_norm_fn(
             x, weight, bias=None, residual=None, eps=1e-6
         ),
@@ -315,6 +333,7 @@ def build_fused_add_rmsnorm_providers(
         residual.copy_(base_residual)
 
     _, _, flaggems_fused_add_rms_norm = load_flaggems()
+    quack_rmsnorm_fwd, _ = load_quack()
 
     def pytorch_impl():
         out = x + residual
@@ -332,6 +351,10 @@ def build_fused_add_rmsnorm_providers(
         ),
         "jit_fused_add_rmsnorm": (
             lambda: jit_fused_add_rmsnorm(x, residual, weight, 1e-6),
+            reset,
+        ),
+        "quack": (
+            lambda: quack_rmsnorm_fwd(x, weight, residual=residual, eps=1e-6),
             reset,
         ),
         "flaggems": (
@@ -360,6 +383,7 @@ def build_layernorm_providers(dtype: torch.dtype, batch_size: int, hidden_size: 
     triton_out = torch.empty_like(x)
 
     _, flaggems_layer_norm, _ = load_flaggems()
+    _, quack_layernorm_fwd = load_quack()
 
     providers = {
         "pytorch": lambda: F.layer_norm(x, (hidden_size,), weight, bias, 1e-6),
@@ -367,6 +391,9 @@ def build_layernorm_providers(dtype: torch.dtype, batch_size: int, hidden_size: 
             x, weight, bias, eps=1e-6, is_rms_norm=False, out=triton_out
         ),
         "flashinfer": lambda: flashinfer_norm.layernorm(
+            x, flashinfer_weight, flashinfer_bias, 1e-6
+        ),
+        "quack": lambda: quack_layernorm_fwd(
             x, flashinfer_weight, flashinfer_bias, 1e-6
         ),
         "flaggems": lambda: flaggems_layer_norm(x, (hidden_size,), weight, bias)[0],
@@ -490,12 +517,16 @@ def write_markdown(rows: list[dict[str, object]], output_path: Path) -> None:
                 continue
             provider_to_values: dict[str, list[float]] = {}
             provider_to_speedups: dict[str, list[float]] = {}
-            by_shape: dict[tuple[int, int], dict[str, float]] = {}
+            by_shape: dict[tuple[str, int, int], dict[str, float]] = {}
             for row in scoped:
                 provider = str(row["provider"])
                 value = float(row["median_us"])
                 provider_to_values.setdefault(provider, []).append(value)
-                shape = (int(row["batch_size"]), int(row["hidden_size"]))
+                shape = (
+                    str(row.get("shape_id", "")),
+                    int(row["batch_size"]),
+                    int(row["hidden_size"]),
+                )
                 by_shape.setdefault(shape, {})[provider] = value
             for shape, perf in by_shape.items():
                 if "pytorch" not in perf:
